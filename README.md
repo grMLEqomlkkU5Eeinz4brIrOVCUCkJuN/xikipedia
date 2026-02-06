@@ -11,7 +11,34 @@ Once Xikipedia has loaded, it is available fully offline, and you can even insta
 
 ## Generating data
 
-To run Xikipedia, you need the .json file that contains the data required. This repo already has a file for the Simple Wikipedia included, but you can also make your own by replacing the files in the `process_data.py` file with your own [WikiMedia data dumps](https://dumps.wikimedia.org/).
+To run Xikipedia, you need the .json file that contains the data required. This repo already has a file for the Simple Wikipedia included, but you can regenerate it or use a different dump.
+
+```bash
+# Auto-download latest Simple Wikipedia dump and generate data
+python process_data.py
+
+# Use a specific dump date
+python process_data.py --date 20260201
+
+# Use existing dump files in a directory
+python process_data.py --skip-download --dumps-dir ./dumps
+
+# Output to a specific directory
+python process_data.py --output-dir ./dist
+```
+
+Dependencies: `pip install mwparserfromhell`
+
+## Self-hosting with Docker
+
+```bash
+# Build and run
+docker build -t xikipedia .
+docker run -p 8080:80 xikipedia
+
+# Regenerate data with bind-mounted dumps
+docker run -v ./dumps:/app/dumps xikipedia python /app/process_data.py --dumps-dir /app/dumps --output-dir /app/www
+```
 
 ## Algorithm
 
@@ -28,7 +55,7 @@ These scores are applied through the `engagePost` function in the code.
 
 Each post has a base score, which is 0 by default. If a post has an image, it gets +5 on its base score. If you've already seen a post, its base score will be `(3**(post_seen_times)-1) * -5000`.
 
-To get the next post in the feed, 10000 random posts are picked out from the data set. Then, one of three things will randomly happen:
+To get the next post in the feed, 500 random posts are picked out from the data set. Then, one of three things will randomly happen:
 
 - (40% chance) The scores of all posts are summed together, and a random value is picked. It's kind of like picking a random value, except posts with higher scores have a higher likelyhood of getting picked.
 - (42% chance) The post with the highest score is shown.
