@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-RUN apt-get update && apt-get install -y nginx && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y nginx brotli && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -11,7 +11,10 @@ COPY process_data.py /app/
 
 COPY index.html sw.js version.json app.webmanifest /app/www/
 COPY favicon.ico favicon-48.png favicon-256.png /app/www/
-COPY smoldata.json.gz /app/www/
+COPY smoldata.json.br /app/
+RUN brotli -d /app/smoldata.json.br -o /app/www/smoldata.json && \
+    gzip -k /app/www/smoldata.json && \
+    rm /app/smoldata.json.br /app/www/smoldata.json
 
 EXPOSE 80
 
