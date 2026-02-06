@@ -659,8 +659,8 @@
 </script>
 <script type="text/javascript">
     const pagesArr = [];
-    let noPageMaps = {};
-    const recursiveCache = new Map();
+    const pageById = new Map();
+    let filteredTitles = [];
     let categoryScores = {
         "given names": -1000,
         "surnames": -1000,
@@ -677,7 +677,7 @@
     const defaultCategories = ["nature", "science", "animals", "anthropology", "places", "sociology", "art", "mathematics", "games", "technology", "music", "human sexuality"];
     let postsWithoutLike = 0;
 
-    const HTML_VERSION = "1.1.0";
+    const HTML_VERSION = "1.2.0";
 
     function loadSettings() {
         const baseSettings = {
@@ -749,7 +749,7 @@
         const searchText = categorySearchInput.value;
         if (!searchText.length)
             return categorySearchSelect.innerText = "";
-        const searchTarget = [...pagesArr.map(e=>e.title.toLowerCase()), ...Object.values(noPageMaps).map(e=>e.toLowerCase())];
+        const searchTarget = [...pagesArr.map(e=>e.title.toLowerCase()), ...filteredTitles.map(e=>e.toLowerCase())];
         let results = searchTarget.filter(e => e.startsWith(searchText.toLowerCase())).slice(0,100);
         if (results.length < 100)
             results = [...results, ...searchTarget.filter(e => e.includes(searchText.toLowerCase()) && !results.includes(e)).slice(0,100-results.length)];
@@ -802,9 +802,9 @@
         pagesArr.filter(e=>e.seen).forEach(e=>e.seen=0);
         try {
             seenPosts.forEach(postId => {
-                const post = pagesArr.find(e=>e.id==postId);
-                post.seen = post.seen || 0;
-                post.seen += 1;
+                const post = pageById.get(postId);
+                if (!post) return;
+                post.seen = (post.seen || 0) + 1;
             });
         } catch {}
         window.scrollTo(0, 0);
@@ -931,7 +931,7 @@
         const likedPostsEl = document.getElementById("likedPosts");
         likedPostsEl.innerText = "";
         likedPosts.forEach(postId => {
-            const post = pagesArr.find(e=>e.id==postId);
+            const post = pageById.get(postId);
             const link = document.createElement(post ? "a" : "em");
             link.classList.add("likedPostEntry");
             if (post) {
@@ -960,37 +960,8 @@
         aboutModal.showModal();
     }
 
-    //const MAX_DEPTH = 10;
-    function recursiveCategories(subCategories, categories, depth) {
-        const allCategories = new Set(categories);
-        categories.forEach(e => {
-            const cat = e?.toLowerCase?.();
-            if (!cat) return [];
-            const subs = (subCategories[cat] ?? []);
-            if (!subs.length)
-                return;
-            let cacheValue = recursiveCache.get(cat);
-            if (!cacheValue) {
-                recursiveCache.set(cat, -1);
-                cacheValue = recursiveCategories(subCategories, subs, depth + 1);
-                recursiveCache.set(cat, cacheValue);
-            } else if (cacheValue == -1) {
-                recursiveCache.set(cat, []);
-                cacheValue = recursiveCategories(subCategories, subs, depth + 1);
-                recursiveCache.set(cat, cacheValue);
-            }
-            allCategories.add(...subs);
-            allCategories.add(...cacheValue);
-        });
-        return new Set([...allCategories].map(e=>e?.toLowerCase?.()||e));
-    }
-
     function convertCat(cat) {
-        if (cat.startsWith("p:")) {
-            cat = cat.slice(2);
-            return pagesArr.find(e=>e.id == cat)?.title ?? noPageMaps[cat] ?? cat;
-        }
-        return cat;
+        return cat.startsWith("p:") ? cat.slice(2) : cat;
     }
 
     function engagePost(post, amount) {
@@ -1063,7 +1034,7 @@
     }
 
     function getNextPost() {
-        const potentialPosts = [...Array(10000)].map(e=>pagesArr[Math.floor(Math.random()*pagesArr.length)]).map(post => {
+        const potentialPosts = [...Array(500)].map(e=>pagesArr[Math.floor(Math.random()*pagesArr.length)]).map(post => {
             const initialScore = (post.thumb ? 5 : 0) + (3**(post.seen??0)-1)*-50000;
             const postScore = [...post.allCategories].reduce((sum, cat) => sum + (categoryScores[cat]??0), initialScore);
             // intentionally do this to the original obj instance
@@ -1075,7 +1046,7 @@
         let bestPost = potentialPosts[0];
 
         if (Math.random() < 0.4) {
-            const minScore = Math.min(potentialPosts.map(e=>e.score));
+            const minScore = Math.min(...potentialPosts.map(e=>e.score));
             const maxScore = potentialPosts.reduce((sum, post) => sum + post.score - minScore, 0);
             const targetScore = Math.random()*maxScore;
             let scoreCount = 0;
@@ -1136,7 +1107,9 @@ async function* streamToAsyncIterable(stream) {
 }
 
     async function getFileWithProgress(url) {
-        const resp = await fetch(url, {cache: "force-cache"});
+        let resp = await fetch(url, {cache: "force-cache"});
+        if (!resp.ok)
+            resp = await fetch(url, {cache: "reload"});
         let responseSize = 0;
         const bytes = new Uint8Array(DATA_SIZE);
         for await (const chunk of streamToAsyncIterable(resp.body)) {
@@ -1204,10 +1177,8 @@ async function* streamToAsyncIterable(stream) {
         //const smoldata = await (await fetch("smoldata.json")).json();
         const smoldata = await getFileWithProgress(DATA_URL);
 
-        const subCategories = smoldata.subCategories;
-        noPageMaps = smoldata.noPageMaps;
-        delete smoldata.subCategories;
-        delete smoldata.noPageMaps;
+        filteredTitles = smoldata.filteredTitles || [];
+        delete smoldata.filteredTitles;
 
         let i = 0;
         const wikiLen = smoldata.pages.length;
@@ -1216,17 +1187,14 @@ async function* streamToAsyncIterable(stream) {
         let lastFrame = Date.now();
         while (smoldata.pages.length) {
             const e = smoldata.pages.pop();
-            const tempPage = {title:e[0],id:e[1],text:e[2],thumb:e[3],categories:e[4],links:e[5]};
+            const tempPage = {title:e[0], id:e[1], text:e[2], thumb:e[3], allCategories:new Set(e[4])};
             if (i % 1000 == 0 && Date.now() - lastFrame > 20) {
                 loadStatus(`${(i/wikiLen*100).toFixed(0)}%`);
                 await new Promise(e => requestAnimationFrame(e));
             }
             i++;
-            //tempPage.allCategories = [...recursiveCategories(subCategories, [...tempPage.categories], 0), `p:${tempPage.id}`, ...tempPage.links.map(e=>`p:${e}`)];
-            tempPage.allCategories = new Set(recursiveCategories(subCategories, [...tempPage.categories], 0));
-            tempPage.allCategories.add(`p:${tempPage.id}`);
-            tempPage.allCategories.add(...tempPage.links.map(e=>`p:${e}`));
             pagesArr.push(tempPage);
+            pageById.set(tempPage.id, tempPage);
         }
         loadStatus("Loaded");
         loading.remove();
@@ -1238,7 +1206,7 @@ async function* streamToAsyncIterable(stream) {
             document.querySelectorAll(".categoryPicker>input:checked").forEach(e => categoryScores[e.dataset.category] = defaultCategories.includes(e.dataset.category) ? 1000 : 5000);
             document.querySelectorAll(".categoryPicker>input:checked").forEach(e => {
                 if (defaultCategories.includes(e.dataset.category)) return;
-                const page = pagesArr.find(x=>x.title.toLowerCase()==e.dataset.category);
+                const page = pagesArr.find(x => x.title.toLowerCase() == e.dataset.category);
                 if (page)
                     engagePost(page, 100);
             });
